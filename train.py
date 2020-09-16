@@ -86,13 +86,13 @@ def test(model, loader, optimizer, device):
 dir_path = os.getcwd() + '/data/'
 file_name = 'output.root'
 
-batch_size = 512
+batch_size = 256
 num_epochs = 16
-train_size = 10000
+train_size = 100000
 test_size  = 10000
 
 model = None
-model_name = 'dcnet'
+model_name = 'nnnet'
 
 ##############################################################################
 
@@ -108,6 +108,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size)
 
 D = datagrabber.num_node_features
 E = datagrabber.num_edge_features
+G = datagrabber.num_global_features
 C = 2
 
 if model_name == 'gcnet':
