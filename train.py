@@ -87,9 +87,9 @@ dir_path = os.getcwd() + '/data/'
 file_name = 'output.root'
 
 batch_size = 256
-num_epochs = 16
-train_size = 100000
-test_size  = 10000
+num_epochs = 32
+train_size = 1000000
+test_size  = 100000
 
 model = None
 model_name = 'nnnet'
