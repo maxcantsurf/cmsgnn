@@ -2,6 +2,8 @@ global_feature_names:
 
   - image_clu_n
   - image_pf_n
+  - image_gsf_ref_eta
+  - image_gsf_ref_phi
   
 cluster_feature_names:
 

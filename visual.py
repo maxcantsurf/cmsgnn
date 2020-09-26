@@ -72,7 +72,6 @@ def plot_clusters(path, connect='tree', n_min=2, pt_min=200.0):
                   r'$p_\mathrm{T, min}=$' + f'{pt_min/10} GeV')
     
     ax1.set_ylabel(r'$\phi$')
-    ax1.set_xlabel(r'$\eta$')
     ax2.set_ylabel(r'$\phi$')
     ax2.set_xlabel(r'$\eta$')
     
@@ -276,26 +275,150 @@ def plot_supercluster_graph(path, n):
         norm = plt.Normalize(vmin=0, vmax=1),
         cmap = "plasma", marker = 's', zorder = 10)
         
+
+def plot_avgs(path):
+    events = uproot.open(path)['ntuplizer']['tree']
+    
+    clu_eta = events['image_clu_eta'].array()
+    clu_phi = events['image_clu_phi'].array()
+    clu_e = events['image_clu_e'].array()
+    clu_n = events['image_clu_n'].array()
+    
+    pf_eta = events['image_pf_eta'].array()
+    pf_phi = events['image_pf_phi'].array()
+    pf_p = events['image_pf_p'].array()
+    pf_n = events['image_pf_n'].array()
+    
+    is_e = events['is_e'].array()
+    
+    c_eta_max, c_eta_min, c_num_eta = 1.0, -1.0, 1000
+    c_phi_max, c_phi_min, c_num_phi = 3.2, -3.2, 1000
+    
+    p_eta_max, p_eta_min, p_num_eta = 0.001, -0.001, 100
+    p_phi_max, p_phi_min, p_num_phi = 1.0, -1.0, 100
+    
+    c_deta = (c_eta_max-c_eta_min)/c_num_eta
+    c_dphi = (c_phi_max-c_phi_min)/c_num_phi
+    
+    p_deta = (p_eta_max-p_eta_min)/p_num_eta
+    p_dphi = (p_phi_max-p_phi_min)/p_num_phi
+    
+    cp_grid_e = np.zeros((c_num_eta, c_num_phi))
+    cp_grid_n = np.zeros((c_num_eta, c_num_phi))
+    
+    cn_grid_e = np.zeros((c_num_eta, c_num_phi))
+    cn_grid_n = np.zeros((c_num_eta, c_num_phi))
+    
+    pp_grid_e = np.zeros((p_num_eta, p_num_phi))
+    pp_grid_n = np.zeros((p_num_eta, p_num_phi))
+    
+    pn_grid_e = np.zeros((p_num_eta, p_num_phi))
+    pn_grid_n = np.zeros((p_num_eta, p_num_phi))
+    
+    for example in range(100000):
+        n = clu_n[example]
+        e = clu_e[example]
+        eta = clu_eta[example]
+        phi = clu_phi[example]
+        is_example_e = is_e[example]
+        
+        if n > 0:
+            if np.all(np.abs(eta) < c_eta_max):
+        
+                for k in range(n):
+                    
+                    i = int(np.floor((eta[k] + c_eta_max)/c_deta))
+                    j = int(np.floor((phi[k] + c_phi_max)/c_dphi))
+                    
+                    if is_example_e:
+                        cp_grid_e[i,j] += e[k]
+                        cp_grid_n[i,j] += 1
+                        
+                    else:
+                        cn_grid_e[i,j] += e[k]
+                        cn_grid_n[i,j] += 1
+    
+    for example in range(100000):
+        n = pf_n[example]
+        p = pf_p[example]
+        eta = pf_eta[example]
+        phi = pf_phi[example]
+        is_example_e = is_e[example]
+        
+        if n > 0:
+            if np.all(np.abs(eta) < p_eta_max):
+        
+                for k in range(n):
+                    
+                    i = int(np.floor((eta[k] + p_eta_max)/p_deta))
+                    j = int(np.floor((phi[k] + p_phi_max)/p_dphi))
+                    
+                    if is_example_e:
+                        pp_grid_e[i,j] += p[k]
+                        pp_grid_n[i,j] += 1
+                        
+                    else:
+                        pn_grid_e[i,j] += p[k]
+                        pn_grid_n[i,j] += 1
+                    
+    fig = plt.figure()
+    
+    ax1 = fig.add_subplot(2, 2, 1)
+    ax2 = fig.add_subplot(2, 2, 2)
+    ax3 = fig.add_subplot(2, 2, 3)
+    ax4 = fig.add_subplot(2, 2, 4)
+    
+    ax1.set_xlim(400, 550)
+    ax3.set_xlim(400, 550)
+    
+    ax1.set_ylim(450, 550)
+    ax3.set_ylim(450, 550)
+    
+    
+    ax1.imshow(cp_grid_e, interpolation='nearest')
+    ax3.imshow(cn_grid_e, interpolation='nearest')
+    ax2.imshow(pp_grid_n, interpolation='nearest')
+    ax4.imshow(pn_grid_n, interpolation='nearest')
+    
         
 def plot_stats(path):
     events = uproot.open(path)['ntuplizer']['tree']
     
     events.show()
     
+    print('')
+    print('ECAL cluster sizes:')
+    print('')
+    
     clu_n = events['image_clu_n'].array()
     pf_n = events['image_pf_n'].array()
+    pf_pdgid = events['image_pf_pdgid'].array().flatten()
+    
     clu_num = np.size(clu_n)
     pf_num = np.size(pf_n)
+    pf_id_num = np.size(pf_pdgid)
     
     for i in range(20):
         clu_count = np.count_nonzero(clu_n == i)
         print(f'n = {i}: {clu_count} ({round(clu_count/clu_num, 3)})')
     
     print('')
+    print('PF cluster sizes:')
+    print('')
         
     for i in range(22):
         pf_count = np.count_nonzero(pf_n == i)
         print(f'n = {i}: {pf_count} ({round(pf_count/pf_num, 3)})')
+    
+    print('')
+    print('PF PDGID distribution:')
+    print('')
+        
+    for i in range(300):
+        pf_id_count = np.count_nonzero(pf_pdgid == i)
+        if pf_id_count > 0:
+            print(f'id = {i}: {pf_id_count} ({round(pf_id_count/pf_id_num, 3)})')
+
 
 
 
@@ -303,6 +426,7 @@ if __name__ == "__main__" :
     root_path = os.getcwd() + '/data/output.root'
     #plot_clusters(root_path, connect='tree')
     #plot_supercluster_graph(root_path, 16)
-    plot_stats(root_path)
+    #plot_stats(root_path)
+    plot_avgs(root_path)
 
 

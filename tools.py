@@ -1,21 +1,25 @@
 import numpy as np
-import networkx as nx
 import matplotlib.pyplot as plt
+import os
+import pickle
+import tkinter as tk
 
+from tkinter import filedialog
 from sklearn import metrics
 from numba import jit
 
 
-def l2_distance(A, B):
+rc = {'font.size': 18, 
+      'mathtext.fontset': 'cm',
+      'legend.fontsize': 18}
+plt.rcParams.update(rc)
+
+
+def l2_norm(A, B):
     p1 = np.sum(A**2, axis=1)[:, np.newaxis]
     p2 = np.sum(B**2, axis=1)
     p3 = -2*np.dot(A, B.T)
     return p1 + p2 + p3
-
-
-def l2_distance_vector(x):
-    x = np.array([x]).transpose()
-    return np.sqrt(np.abs(l2_norm(x, x)))
 
 
 @jit(nopython = True)
@@ -49,7 +53,7 @@ def k_nn_graph(A, k):
     return A_new, indices_full
 
 
-def roc_curve(target, pred):
+def roc_curve(target, pred, name=None, model=None, cluster=None):
     
     fpr, tpr, thresholds = metrics.roc_curve(target, pred)
     fig = plt.figure()
@@ -63,9 +67,22 @@ def roc_curve(target, pred):
     auc = metrics.auc(fpr, tpr)
     ax.set_title(f'AUC = {auc}')
     
+    if name is not None:
+        
+        data = {'model':model,
+                'name':name,
+                'cluster':cluster,
+                'fpr':fpr,
+                'tpr':tpr,
+                'auc':auc
+                }
+        
+        with open(os.getcwd() + '/rocs/'+ name + '.pkl', 'wb') as f:
+            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+    
     print(f'AUC = {auc}')
-    
-    
+
+
 def loss_curve(epochs, losses):
     
     fig = plt.figure()
@@ -73,4 +90,35 @@ def loss_curve(epochs, losses):
     ax.plot(epochs, losses)
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
-        
+
+
+def plot_rocs():
+    root = tk.Tk()
+    root.withdraw()
+    inititaldir = os.getcwd() + '/rocs/'
+    files = filedialog.askopenfilenames(parent=root, initialdir=inititaldir, 
+                                        title='Please select files')
+    runs = []
+    
+    for file in files:
+        with open(file, 'rb') as f:
+            run = pickle.load(f)
+            runs.append(run)
+            
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.grid()
+    ax.set_xscale('log')
+    ax.set_xlabel('FPR / Mistag Rate')
+    ax.set_ylabel('TPR / Efficiency')
+    
+    for run in runs:
+        tpr = run['tpr']
+        fpr = run['fpr']
+        auc = run['auc']
+        name = run['name']
+    
+        label = f'{name}, AUC = {round(auc, 3)}'
+        ax.plot(fpr, tpr, label=label)
+    
+    ax.legend()

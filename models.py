@@ -9,37 +9,6 @@ from   torch_geometric.nn import Set2Set, global_mean_pool, global_max_pool, glo
 from   torch_geometric.nn import NNConv, GINEConv, GATConv, SplineConv, GCNConv, SGConv, SAGEConv, EdgeConv, DynamicEdgeConv
 
 
-class GCNet(torch.nn.Module):
-    def __init__(self, D, C, Q):
-        super(GCNet, self).__init__()
-        
-        self.D = D
-        self.C = C
-        self.Q = Q
-        
-        self.conv1 = GCNConv(self.D, self.Q)
-        self.conv2 = GCNConv(self.Q, self.Q)
-        
-        self.lin1 = torch.nn.Linear(self.Q, self.C)
-
-    def forward(self, data):
-        x, edge_index = data.x, data.edge_index
-        
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        
-        x = self.conv2(x, edge_index)
-        x = F.relu(x)
-        
-        x = F.dropout(x, 0.25, training=self.training)
-        x = self.lin1(x)
-        
-        return x
-
-    def softpredict(self,x):
-        return F.softmax(self.forward(x), dim=1)
-    
-
 def MLP(channels, batch_norm=True):
     """
     Return a Multi Layer Perceptron with an arbitrary number of layers.
@@ -65,12 +34,77 @@ def MLP(channels, batch_norm=True):
     ])
 
 
+class GCNet(torch.nn.Module):
+    def __init__(self, D, C, G=0, task='graph', aggr='max', conclayers=True):
+        super(GCNet, self).__init__()
+
+        self.D = D # Num node features
+        self.C = C # Num outputs
+        self.G = G # Num glbal features
+
+        self.task  = task
+        self.conclayers = conclayers
+
+        # Convolution layers
+        self.conv1 = GCNConv(self.D, 32)
+        self.conv2 = GCNConv(32, 64)
+        
+        # "Fusion" layer taking in conv1 and conv2 outputs
+        if self.conclayers:
+            self.lin1  = MLP([32 + 64, 96])
+        else:
+            self.lin1 = MLP([64, 96])
+        
+        if (self.G > 0):
+            self.Z = 96 + self.G
+        else:
+            self.Z = 96
+
+        # Final layers concatenating everything
+        self.mlp1  = MLP([self.Z, self.Z, self.C])
+
+    def forward(self, data):
+
+        if not hasattr(data,'batch'):
+            # Create virtual null batch if singlet graph input
+            setattr(data, 'batch', torch.tensor(np.zeros(data.x.shape[0]), dtype=torch.long))
+            
+        x = data.x
+        
+        x1 = self.conv1(x, data.edge_index)
+        x2 = self.conv2(x1, data.edge_index)
+            
+        if self.conclayers:
+            x = self.lin1(torch.cat([x1, x2], dim=1))
+            
+        else:
+            x = self.lin1(x2)
+
+        # ** Global pooling (to handle graph level classification) **
+        if self.task == 'graph':
+            x = global_max_pool(x, data.batch)
+
+        # Global features concatenated
+        if self.G > 0:
+            u = data.u.view(-1, self.G)
+            x = torch.cat((x, u), 1)
+
+        # Final layers
+        x = self.mlp1(x)
+
+        return x
+
+    # Returns softmax probability
+    def softpredict(self,x) :
+        return F.softmax(self.forward(x), dim=1)
+    
+
 # GATConv based graph net
 #
 # https://arxiv.org/abs/1710.10903
 #
 class GATNet(torch.nn.Module):
-    def __init__(self, D, C, G=0, dropout=0.25, task='node'):
+    def __init__(self, D, C, G=0, dropout=0.25, task='graph'):
         super(GATNet, self).__init__()
 
         self.D = D
@@ -101,7 +135,7 @@ class GATNet(torch.nn.Module):
 
         x = F.elu(self.conv2(x,      data.edge_index))
         x = F.dropout(x, training=self.training)
-
+        
         # ** Global pooling (to handle graph level classification) **
         if self.task == 'graph':
             x = global_max_pool(x, data.batch)
@@ -126,7 +160,7 @@ class GATNet(torch.nn.Module):
 # https://arxiv.org/abs/1801.07829
 #
 class DECNet(torch.nn.Module):
-    def __init__(self, D, C, G=0, k=4, task='node', aggr='max'):
+    def __init__(self, D, C, G=0, k=4, task='graph', aggr='max', conclayers=True):
         super(DECNet, self).__init__()
 
         self.D = D
@@ -134,13 +168,17 @@ class DECNet(torch.nn.Module):
         self.G = G
 
         self.task  = task
+        self.conclayers = conclayers
 
         # Convolution layers
         self.conv1 = DynamicEdgeConv(MLP([2 * self.D, 32, 32]), k=k, aggr=aggr)
         self.conv2 = DynamicEdgeConv(MLP([2 * 32, 64]), k=k, aggr=aggr)
         
         # "Fusion" layer taking in conv1 and conv2 outputs
-        self.lin1  = MLP([32 + 64, 96])
+        if self.conclayers:
+            self.lin1  = MLP([32 + 64, 96])
+        else:
+            self.lin1 = MLP([64, 96])
         
         if (self.G > 0):
             self.Z = 96 + self.G
@@ -155,11 +193,20 @@ class DECNet(torch.nn.Module):
         if not hasattr(data,'batch'):
             # Create virtual null batch if singlet graph input
             setattr(data, 'batch', torch.tensor(np.zeros(data.x.shape[0]), dtype=torch.long))
-
-        x1 = self.conv1(data.x, data.batch)
-        x2 = self.conv2(x1,     data.batch)
-
-        x = self.lin1(torch.cat([x1, x2], dim=1))
+            
+        x = data.x
+            
+        if self.conclayers:
+            x1 = self.conv1(x, data.batch)
+            x2 = self.conv2(x1, data.batch)
+    
+            x = self.lin1(torch.cat([x1, x2], dim=1))
+            
+        else:
+            x = self.conv1(x, data.batch)
+            x = self.conv2(x, data.batch)
+            
+            x = self.lin1(x)
 
         # ** Global pooling (to handle graph level classification) **
         if self.task == 'graph':
@@ -185,7 +232,9 @@ class DECNet(torch.nn.Module):
 # https://arxiv.org/abs/1704.01212
 #
 class NNNet(torch.nn.Module):
-    def __init__(self, D, C, G=0, E=1, Q=96, task='node', aggr='add', pooltype='s2s'):
+    def __init__(self, D, C, G=0, E=1, Q=96, task='graph', aggr='add', 
+                 pooltype='max', conclayers=True):
+        
         super(NNNet, self).__init__()
 
         self.D = D  # node feature dimension
@@ -197,6 +246,7 @@ class NNNet(torch.nn.Module):
 
         self.task     = task
         self.pooltype = pooltype
+        self.conclayers = conclayers
 
         # Convolution layers
         # nn with size [-1, num_edge_features] x [-1, in_channels * out_channels]
@@ -204,7 +254,10 @@ class NNNet(torch.nn.Module):
         self.conv2 = NNConv(in_channels=D, out_channels=D, nn=MLP([E, D*D]), aggr=aggr)
         
         # "Fusion" layer taking in conv layer outputs
-        self.lin1  = MLP([D+D, Q])
+        if self.conclayers:
+            self.lin1  = MLP([D+D, Q])
+        else:
+            self.lin1 = MLP([D, Q])
 
         # Set2Set pooling operation produces always output with 2 x input dimension
         # => use linear layer to project down
@@ -226,10 +279,17 @@ class NNNet(torch.nn.Module):
         if not hasattr(data,'batch'):
             # Create virtual null batch if singlet graph input
             setattr(data, 'batch', torch.tensor(np.zeros(data.x.shape[0]), dtype=torch.long))
+            
+        x = data.x
+        
+        x1 = self.conv1(x,  data.edge_index, data.edge_attr)
+        x2 = self.conv2(x1, data.edge_index, data.edge_attr)
 
-        x1 = self.conv1(data.x, data.edge_index, data.edge_attr)
-        x2 = self.conv2(x1,     data.edge_index, data.edge_attr)
-        x  = self.lin1(torch.cat([x1, x2], dim=1))
+        if self.conclayers:
+            x  = self.lin1(torch.cat([x1, x2], dim=1))
+            
+        else:
+            x = self.lin1(x2)
 
         # ** Global pooling **
         if self.task == 'graph':
@@ -259,7 +319,7 @@ class NNNet(torch.nn.Module):
 # https://arxiv.org/abs/1711.08920
 #
 class SplineNet(torch.nn.Module):
-    def __init__(self, D, C, G=0, task='node'):
+    def __init__(self, D, C, G=0, task='graph'):
         super(SplineNet, self).__init__()
 
         self.D     = D
@@ -273,6 +333,7 @@ class SplineNet(torch.nn.Module):
             self.Z = self.D + self.G
         else:
             self.Z = self.D
+            
         self.mlp1 = Linear(self.Z, self.Z)
         self.mlp2 = Linear(self.Z, self.C)
 
@@ -312,7 +373,7 @@ class SplineNet(torch.nn.Module):
 # https://arxiv.org/abs/1706.02216
 # 
 class SAGENet(torch.nn.Module):
-    def __init__(self, D, C, G=0, task='node'):
+    def __init__(self, D, C, G=0, task='graph'):
         super(SAGENet, self).__init__()
 
         self.D     = D
@@ -367,7 +428,7 @@ class SAGENet(torch.nn.Module):
 # https://arxiv.org/abs/1902.07153
 # 
 class SGNet(torch.nn.Module):
-    def __init__(self, D, C, G=0, K=2, task='node'):
+    def __init__(self, D, C, G=0, K=2, task='graph'):
         super(SGNet, self).__init__()
 
         self.D     = D
@@ -424,7 +485,7 @@ class SGNet(torch.nn.Module):
 # https://arxiv.org/abs/1905.12265
 #
 class GINENet(torch.nn.Module):
-    def __init__(self, D, C, G=0, task='node'):
+    def __init__(self, D, C, G=0, task='graph'):
         super(GINENet, self).__init__()
 
         self.D = D
